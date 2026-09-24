@@ -1,0 +1,103 @@
+name: Giants resale monitor
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Playwright
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install --with-deps chromium
+
+      - name: Check resale page
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          cat > monitor.js <<'EOF'
+          const { chromium } = require("playwright");
+          const fs = require("fs");
+          const crypto = require("crypto");
+
+          const URL =
+            "https://tradead.tixplus.jp/giants/buy/bidding/listings/2770";
+
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage();
+
+            await page.goto(URL, {
+              waitUntil: "networkidle",
+              timeout: 60000
+            });
+
+            await page.waitForTimeout(5000);
+
+            const text = await page.locator("body").innerText();
+
+            const normalized = text
+              .replace(/\s+/g, " ")
+              .trim();
+
+            const hash = crypto
+              .createHash("sha256")
+              .update(normalized)
+              .digest("hex");
+
+            const stateFile = "page-state.txt";
+            const oldHash = fs.existsSync(stateFile)
+              ? fs.readFileSync(stateFile, "utf8").trim()
+              : "";
+
+            fs.writeFileSync(stateFile, hash);
+
+            if (oldHash && oldHash !== hash) {
+              const message =
+                "巨人公式リセール2770のページが更新されました。\n\n" +
+                "チケットが出ている可能性があります。確認してください。\n" +
+                URL;
+
+              await fetch(`https://ntfy.sh/${process.env.NTFY_TOPIC}`, {
+                method: "POST",
+                headers: {
+                  "Title": "巨人リセール2770 更新",
+                  "Priority": "high"
+                },
+                body: message
+              });
+
+              console.log("Notification sent.");
+            } else {
+              console.log("No change.");
+            }
+
+            await browser.close();
+          })();
+          EOF
+
+          node monitor.js
+
+      - name: Save state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add page-state.txt
+          git diff --cached --quiet || git commit -m "Update monitor state"
+          git push
