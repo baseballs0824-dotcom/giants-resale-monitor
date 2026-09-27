@@ -35,7 +35,7 @@ jobs:
           const { chromium } = require("playwright");
           const fs = require("fs");
 
-          const URL = "https://tradead.tixplus.jp/giants";
+          const URL = "https://tradead.tixplus.jp/giants/buy/bidding/listings/2770";
 
           (async () => {
             const browser = await chromium.launch({ headless: true });
